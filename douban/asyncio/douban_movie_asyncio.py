@@ -192,16 +192,19 @@ async def movie(line, fileout, lock):
     :param fileout: 数据存储文件
     :return:
     '''
-    async with semaphore:    # 通过asyncio.Semaphore()控制并发量(Semaphore信号量机制控制并发数量)
-        movie_name = line.split('\t')[0]  # 电影名
-        # print('电影名：', movie_name)
-        movie_url = 'https://www.douban.com/search?cat=1002&q={q}'.format(q=movie_name)    # 豆瓣搜索页url
-        # response = await aiohttp.request('GET', movie_url)    # 该方法不存在超时设置
-        async with aiohttp.ClientSession() as session:
-            response_text = await movie_req(session, movie_url, lock)    # 豆瓣电影索引页
-            if response_text is not None:
-                # print(response_text)
-                await http_parse(response_text, line, fileout, lock)    # 页面解析
+    try:
+        async with semaphore:    # 通过asyncio.Semaphore()控制并发量(Semaphore信号量机制控制并发数量)
+            movie_name = line.split('\t')[0]  # 电影名
+            # print('电影名：', movie_name)
+            movie_url = 'https://www.douban.com/search?cat=1002&q={q}'.format(q=movie_name)    # 豆瓣搜索页url
+            # response = await aiohttp.request('GET', movie_url)    # 该方法不存在超时设置
+            async with aiohttp.ClientSession() as session:
+                response_text = await movie_req(session, movie_url, lock)    # 豆瓣电影索引页
+                if response_text is not None:
+                    # print(response_text)
+                    await http_parse(response_text, line, fileout, lock)    # 页面解析
+    except BaseException as e:
+        print('movie()异常：{}'.format(e))
 
 
 async def http_parse(response_text, line, fileout, lock):
@@ -212,35 +215,34 @@ async def http_parse(response_text, line, fileout, lock):
     :param fileout: 数据存储文件
     :return:
     '''
-    xpath_obj = lxml.etree.HTML(response_text)
-    results = xpath_obj.xpath('//div[@class="result"]')
-    if results:
-        result = results[0]  # 获取搜索结果的第一条
-        pic_url = result.xpath('.//a[@class="nbg"]/img/@src')[0]  # 图片url
-        # print('图片url：', pic_url)
-        tag = result.xpath('.//div[@class="title"]/h3/span/text()')[0].replace('[', '').replace(']', '')  # 标签
-        # print('标签：', tag)
-        name = result.xpath('.//div[@class="title"]/h3/a/text()')[0]  # 电影名
-        print('电影名：', name)
-        url = result.xpath('.//div[@class="title"]/h3/a/@href')[0]  # 电影url
-        url = await douban_url(url, lock)  # 获取跳转后的链接接口
-        # print '电影url：', url
-        des = result.xpath('.//span[@class="subject-cast"]/text()')[0]
-        # print des, repr(des)
-        movie_time = des.split(' / ')[-1]  # 时间
-        # print '年份：', movie_time
-        try:
+    try:
+        xpath_obj = lxml.etree.HTML(response_text)
+        results = xpath_obj.xpath('//div[@class="result"]')
+        if results:
+            result = results[0]  # 获取搜索结果的第一条
+            pic_url = result.xpath('.//a[@class="nbg"]/img/@src')[0]  # 图片url
+            # print('图片url：', pic_url)
+            tag = result.xpath('.//div[@class="title"]/h3/span/text()')[0].replace('[', '').replace(']', '')  # 标签
+            # print('标签：', tag)
+            name = result.xpath('.//div[@class="title"]/h3/a/text()')[0]  # 电影名
+            print('电影名：', name)
+            url = result.xpath('.//div[@class="title"]/h3/a/@href')[0]  # 电影url
+            url = await douban_url(url, lock)  # 获取跳转后的链接接口
+            # print '电影url：', url
+            des = result.xpath('.//span[@class="subject-cast"]/text()')[0]
+            # print des, repr(des)
+            movie_time = des.split(' / ')[-1]  # 时间
+            # print '年份：', movie_time
             content = '\t'.join([line, tag, name, url, pic_url, movie_time])
             fileout.write(content)
             fileout.write('\n')
             fileout.flush()
-        except TypeError as e:
-            print('TypeError异常 line：{line} tag：{tag} name：{name} url：{url} pic_url：{pic_url} movie_time：{movie_time}'
-                  .format(line=line, tag=tag, name=name, url=url, pic_url=pic_url, movie_time=movie_time))
+        else:  # 该影视无搜索结果
+            print('该影视无搜索结果：{}'.format(line))
+            # print response.text
 
-    else:  # 该影视无搜索结果
-        print('该影视无搜索结果：{}'.format(line))
-        # print response.text
+    except BaseException as e:
+        print('http_parse()异常：{}'.format(e))
 
 
 async def douban_url(url, lock):
@@ -249,12 +251,16 @@ async def douban_url(url, lock):
     :param url: 跳转前的链接
     :return:
     '''
-    # response = aiohttp.request('GET', url=url)
-    async with aiohttp.ClientSession() as session:
-        response_url = await douban_url_req(session, url, lock)    # url跳转接口
-        if response_url is None:
-            response_url = ''
-        return response_url
+    try:
+        # response = aiohttp.request('GET', url=url)
+        async with aiohttp.ClientSession() as session:
+            response_url = await douban_url_req(session, url, lock)    # url跳转接口
+            if response_url is None:
+                response_url = ''
+    except BaseException as e:
+        response_url = ''
+        print('douban_url()异常：{}'.format(e))
+    return response_url
 
 
 @retry(DoubanException, retries=10)
@@ -351,7 +357,7 @@ async def main(loop):
             tasks.append(future)    # 任务列表
     # loop.run_until_complete(asyncio.wait(tasks))
     await asyncio.wait(tasks),
-    loop.close()
+    # loop.close()
 
     try:
         fileout.flush()
@@ -364,14 +370,15 @@ async def main(loop):
 
 
 if __name__ == '__main__':
-    get_proxy_ips(100)  # 获取代理ip接口
+    loop = asyncio.get_event_loop()
+    cor = async_get_proxy_ips(100)  # 初始化时获取代理ip接口
+    loop.run_until_complete(cor)
     ip_num = PROXY_IP_Q.qsize()
     print(time.strftime('[%Y-%m-%d %H:%M:%S]'), '获取代理ip的数量：', ip_num)
     proxies = PROXY_IP_Q.get(
         False)  # 初衷：就是提供一个第一次异常前的有效的代理ip（就是说当代理ip失效之后，会获取新的代理ip，那么之后的请求就是用获取到的有效的代理ip）（所以也就没有将第一次获取到的代理ip放入到协程对象的参数列表中。因为这样当代理IP失效之后，依然会使用）
     print('初始时获取代理ip：', proxies)
 
-    loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(main(loop))
     except BaseException as e:
